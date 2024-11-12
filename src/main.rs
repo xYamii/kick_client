@@ -1,39 +1,95 @@
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use rusqlite::{params, Connection, Result};
-use serde::Deserialize;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, protocol::Message},
 };
+use serde::{Deserialize, Serialize};
+use serde::de::Deserializer;
+use serde_json::Value;
 
-#[derive(Deserialize)]
-struct ChannelResponse {
-    chatroom: Chatroom,
+#[derive(Serialize, Deserialize, Debug)]
+struct ChatMessage {
+    event: String,
+    #[serde(deserialize_with = "deserialize_data")]
+    data: Option<MessageData>,
+    channel: String,
 }
 
-#[derive(Deserialize)]
-struct Chatroom {
-    id: u64,
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+enum MessageData {
+    ChatMessage(ChatMessageData),
+    DeletedMessage(DeletedMessageData),
+    Unknown(Value),
 }
 
-async fn get_chatroom_id(username: &str) -> Result<u64, Box<dyn std::error::Error>> {
-    let url = format!("https://kick.com/api/v2/channels/{}", username);
-    let client = Client::new();
+#[derive(Serialize, Deserialize, Debug)]
+struct ChatMessageData {
+    id: String,
+    chatroom_id: Option<u32>,
+    content: Option<String>,
+    r#type: Option<String>,
+    created_at: Option<String>,
+    sender: Option<Sender>,
+}
 
-    let response = client.get(&url).send().await?;
+#[derive(Serialize, Deserialize, Debug)]
+struct DeletedMessageData {
+    id: String,
+    message: DeletedMessage,
+    ai_moderated: bool,
+}
 
-    if !response.status().is_success() {
-        println!("Failed to retrieve data: {}", response.status());
-        return Err("Non-successful status code")?;
+#[derive(Serialize, Deserialize, Debug)]
+struct DeletedMessage {
+    id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Sender {
+    id: u32,
+    username: String,
+    slug: String,
+    identity: Identity,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Identity {
+    color: String,
+    badges: Vec<String>,
+}
+
+fn deserialize_data<'de, D>(deserializer: D) -> Result<Option<MessageData>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let data_str = String::deserialize(deserializer)?;
+    
+    match serde_json::from_str(&data_str) {
+        Ok(data) => Ok(Some(data)),
+        Err(_) => Ok(None),
     }
-
-    let response_text = response.text().await?;
-    println!("Response Text: {}", response_text);
-
-    let response_json: ChannelResponse = serde_json::from_str(&response_text)?;
-    Ok(response_json.chatroom.id)
 }
+
+// async fn get_chatroom_id(username: &str) -> Result<u64, Box<dyn std::error::Error>> {
+//     let url = format!("https://kick.com/api/v2/channels/{}", username);
+//     let client = Client::new();
+
+//     let response = client.get(&url).send().await?;
+
+//     if !response.status().is_success() {
+//         println!("Failed to retrieve data: {}", response.status());
+//         return Err("Non-successful status code")?;
+//     }
+
+//     let response_text = response.text().await?;
+//     println!("Response Text: {}", response_text);
+
+//     let response_json: ChannelResponse = serde_json::from_str(&response_text)?;
+//     Ok(response_json.chatroom.id)
+// }
 
 async fn save_message_to_db(conn: &Connection, username: &str, message: &str) -> Result<()> {
     conn.execute(
@@ -73,17 +129,17 @@ async fn subscribe_and_listen(chatroom_id: u64) -> Result<(), Box<dyn std::error
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let data = parsed.get("data");
-                    if data == None {
-                        println!("No data field found");
-                        continue;
-                    }
-                    let data = data.unwrap();
-                    if let Some(username) = data["username"].as_str() {
-                        if let Some(message) = data["message"].as_str() {
-                            println!("{}: {}", username, message);
-                            save_message_to_db(&conn, username, message).await?;
+                let parsed_message: Option<ChatMessage> = serde_json::from_str(&text).ok();
+                if let Some(parsed_message) = parsed_message {
+                    println!("{:?}", parsed_message);
+                    match parsed_message.data {
+                        Some(MessageData::ChatMessage(data)) => {
+                        }
+                        Some(MessageData::DeletedMessage(data)) => {
+                        }
+                        Some(MessageData::Unknown(data)) => {
+                        }
+                        None => {
                         }
                     }
                 }
@@ -101,7 +157,6 @@ async fn subscribe_and_listen(chatroom_id: u64) -> Result<(), Box<dyn std::error
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let username = "xYamii";
     let chatroom_id = 281473;
 
     subscribe_and_listen(chatroom_id).await?;
