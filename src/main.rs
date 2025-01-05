@@ -1,77 +1,12 @@
+use events::chat_events::{ChatMessage, MessageData};
 use futures_util::{SinkExt, StreamExt};
-use reqwest::Client;
 use rusqlite::{params, Connection, Result};
+use std::fs::OpenOptions;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, protocol::Message},
 };
-use serde::{Deserialize, Serialize};
-use serde::de::Deserializer;
-use serde_json::Value;
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ChatMessage {
-    event: String,
-    #[serde(deserialize_with = "deserialize_data")]
-    data: Option<MessageData>,
-    channel: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-enum MessageData {
-    ChatMessage(ChatMessageData),
-    DeletedMessage(DeletedMessageData),
-    Unknown(Value),
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ChatMessageData {
-    id: String,
-    chatroom_id: Option<u32>,
-    content: Option<String>,
-    r#type: Option<String>,
-    created_at: Option<String>,
-    sender: Option<Sender>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct DeletedMessageData {
-    id: String,
-    message: DeletedMessage,
-    ai_moderated: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct DeletedMessage {
-    id: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Sender {
-    id: u32,
-    username: String,
-    slug: String,
-    identity: Identity,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Identity {
-    color: String,
-    badges: Vec<String>,
-}
-
-fn deserialize_data<'de, D>(deserializer: D) -> Result<Option<MessageData>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let data_str = String::deserialize(deserializer)?;
-    
-    match serde_json::from_str(&data_str) {
-        Ok(data) => Ok(Some(data)),
-        Err(_) => Ok(None),
-    }
-}
+mod events;
 
 // async fn get_chatroom_id(username: &str) -> Result<u64, Box<dyn std::error::Error>> {
 //     let url = format!("https://kick.com/api/v2/channels/{}", username);
@@ -91,13 +26,13 @@ where
 //     Ok(response_json.chatroom.id)
 // }
 
-async fn save_message_to_db(conn: &Connection, username: &str, message: &str) -> Result<()> {
-    conn.execute(
-        "INSERT INTO chat_messages (username, message) VALUES (?1, ?2)",
-        params![username, message],
-    )?;
-    Ok(())
-}
+// async fn save_message_to_db(conn: &Connection, username: &str, message: &str) -> Result<()> {
+//     conn.execute(
+//         "INSERT INTO chat_messages (username, message) VALUES (?1, ?2)",
+//         params![username, message],
+//     )?;
+//     Ok(())
+// }
 
 async fn subscribe_and_listen(chatroom_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let request = "wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false".into_client_request().unwrap();
@@ -129,17 +64,25 @@ async fn subscribe_and_listen(chatroom_id: u64) -> Result<(), Box<dyn std::error
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(text)) => {
+                println!("Received a text message: {}", text);
                 let parsed_message: Option<ChatMessage> = serde_json::from_str(&text).ok();
+                println!("parsed_message: {:?}", parsed_message);
                 if let Some(parsed_message) = parsed_message {
-                    println!("{:?}", parsed_message);
                     match parsed_message.data {
                         Some(MessageData::ChatMessage(data)) => {
+                            println!("data: {:?}", data);
                         }
                         Some(MessageData::DeletedMessage(data)) => {
+                            println!("Deleted message: {:?}", data);
                         }
                         Some(MessageData::Unknown(data)) => {
+                            // println!("Unknown message: {:?}", data);
                         }
                         None => {
+                            // println!("No data in message");
+                        }
+                        _ => {
+                            // println!("No data in message");
                         }
                     }
                 }
