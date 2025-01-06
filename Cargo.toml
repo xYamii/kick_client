@@ -1,13 +1,24 @@
 [package]
-name = "kick_chatbot"
+name = "kick_client"
 version = "0.1.0"
+authors = ["xYamii yamii13371@gmail.com"]
 edition = "2021"
+license = "MIT"
+description = "A WebSocket client for interacting with Kick chatrooms."
+homepage = "https://github.com/xyamii/kick_client"
+repository = "https://github.com/xyamii/kick_client"
+documentation = "https://docs.rs/kick_client"
+readme = "README.md"
+keywords = ["kick", "websocket", "client", "chat"]
+categories = ["network-programming", "web-programming"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.24.0", features = ["connect", "native-tls"] }
-reqwest = { version = "0.12.9", features = ["json", "blocking", "native-tls"] }
+tokio-tungstenite = { version = "0.26.1", features = ["connect", "native-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rusqlite = { version = "0.32.1", features = ["bundled"] }
 futures-util = "0.3"
+
+[lib]
+name = "kick_client"
+crate-type = ["lib"] 

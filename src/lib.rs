@@ -1,26 +1,141 @@
+use futures_util::{SinkExt, StreamExt};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::error::Error;
+use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
+/// A WebSocket client for connecting to and reading messages from Kick chatroom.
+pub struct KickClient {
+    /// The WebSocket URL used to connect to the Kick server.
+    url: String,
+}
+
+impl KickClient {
+    /// Creates a new instance of `KickClient` with the provided WebSocket URL.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The WebSocket URL to connect to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let client = KickClient::new("wss://example.com");
+    /// ```
+    pub fn new(url: &str) -> Self {
+        Self {
+            url: url.to_string(),
+        }
+    }
+    /// Connects to the WebSocket and subscribes to a Kick chatroom.
+    ///
+    /// # Arguments
+    ///
+    /// * `chatroom_id` - The ID of the chatroom to subscribe to.
+    ///
+    /// # Returns
+    ///
+    /// A `tokio::sync::mpsc::Receiver` that can be used to receive parsed messages.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the WebSocket connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// let client = KickClient::new("wss://example.com");
+    /// let mut messages = client.connect(12345).await.unwrap();
+    /// while let Some(message) = messages.recv().await {
+    ///     if let Some(data) = message.data {
+    ///         println!("Message: {:?}", data);
+    ///     }
+    /// }
+    /// # });
+    /// ```
+    pub async fn connect(
+        &self,
+        chatroom_id: u64,
+    ) -> Result<mpsc::Receiver<ChatMessage>, Box<dyn Error>> {
+        let (ws_stream, _) = connect_async(self.url.clone()).await?;
+        let (mut write, mut read) = ws_stream.split();
+
+        let subscribe_message = serde_json::json!({
+            "event": "pusher:subscribe",
+            "data": {
+                "auth": "",
+                "channel": format!("chatrooms.{}.v2", chatroom_id)
+            }
+        });
+
+        write
+            .send(Message::Text(subscribe_message.to_string().into()))
+            .await?;
+
+        let (tx, rx) = mpsc::channel(100);
+
+        tokio::spawn(async move {
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        let parsed_message: Option<ChatMessage> = serde_json::from_str(&text).ok();
+                        if let Some(parsed_message) = parsed_message {
+                            if tx.send(parsed_message).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error receiving message: {}", e);
+                        break;
+                    }
+                    _ => {
+                        eprintln!("Received a non-text message");
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+}
+
+/// Enum representing different types of messages received from the WebSocket.
 #[derive(Serialize, Debug)]
 #[serde(untagged)]
 pub enum MessageData {
+    /// A chat message received in the chatroom.
     ChatMessage(ChatMessageEventData),
+    /// A message indicating that user's message was deleted.
     DeletedMessage(DeletedMessageEventData),
+    /// A message indicating that a user was banned from the chatroom.
     UserBanned(UserBannedEventData),
+    /// A message indicating that a user was unbanned from the chatroom.
     UserUnbanned(UserUnbannedEventData),
+    /// A message indicating that the chatroom was updated.
     ChatroomUpdated(ChatroomUpdatedEventData),
+    /// A message indicating that the chatroom was cleared.
     ChatroomClear(ChatroomClearEventData),
+    /// A message indicating that a poll was updated.
     PollUpdate(PollUpdateEventData),
+    /// A message indicating that a poll was deleted.
     PollDelete(PollDeleteEventData),
+    /// A message of unknown type.
     Unknown(String),
 }
 
+/// Data structure containing the content of a message.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatMessage {
+    /// Type of the event send by the server.
     pub event: String,
+    /// Data of the message.
     #[serde(deserialize_with = "deserialize_data")]
     pub data: Option<MessageData>,
+    /// Channel id.
     pub channel: String,
 }
 
@@ -247,7 +362,6 @@ impl<'de> Deserialize<'de> for MessageData {
             Ok(poll_update) => return Ok(MessageData::PollUpdate(poll_update)),
             Err(_) => {}
         }
-
         match serde_json::from_str::<PollDeleteEventData>(&data_str) {
             Ok(poll_delete) => return Ok(MessageData::PollDelete(poll_delete)),
             Err(_) => {}
