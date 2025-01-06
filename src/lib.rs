@@ -1,6 +1,6 @@
 use futures_util::{SinkExt, StreamExt};
-use serde::de::Deserializer;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeOwned, Deserializer};
+use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::error::Error;
 use tokio::sync::mpsc;
@@ -79,10 +79,13 @@ impl KickClient {
 
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
+                println!("[tokio::spawn] recv msg: {:?}", msg);
                 match msg {
                     Ok(Message::Text(text)) => {
-                        let parsed_message: Option<ChatMessage> = serde_json::from_str(&text).ok();
-                        if let Some(parsed_message) = parsed_message {
+                        let parsed_message: serde_json::Result<ChatMessage> =
+                            serde_json::from_str(&text)
+                                .inspect_err(|e| eprintln!("Error parsing message: {}", e));
+                        if let Ok(parsed_message) = parsed_message {
                             if tx.send(parsed_message).await.is_err() {
                                 break;
                             }
@@ -93,7 +96,7 @@ impl KickClient {
                         break;
                     }
                     _ => {
-                        eprintln!("Received a non-text message");
+                        eprintln!("Received a non-text message:\n {:?}", msg);
                     }
                 }
             }
@@ -104,24 +107,40 @@ impl KickClient {
 }
 
 /// Enum representing different types of messages received from the WebSocket.
-#[derive(Serialize, Debug)]
-#[serde(untagged)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "event", content = "data")]
 pub enum MessageData {
     /// A chat message received in the chatroom.
+    #[serde(rename = "App\\Events\\ChatMessageEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     ChatMessage(ChatMessageEventData),
     /// A message indicating that user's message was deleted.
+    #[serde(rename = "App\\Events\\DeletedMessageEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     DeletedMessage(DeletedMessageEventData),
     /// A message indicating that a user was banned from the chatroom.
+    #[serde(rename = "App\\Events\\UserBannedEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     UserBanned(UserBannedEventData),
     /// A message indicating that a user was unbanned from the chatroom.
+    #[serde(rename = "App\\Events\\UserUnbannedEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     UserUnbanned(UserUnbannedEventData),
     /// A message indicating that the chatroom was updated.
+    #[serde(rename = "App\\Events\\ChatroomUpdatedEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     ChatroomUpdated(ChatroomUpdatedEventData),
     /// A message indicating that the chatroom was cleared.
+    #[serde(rename = "App\\Events\\ChatroomClearEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     ChatroomClear(ChatroomClearEventData),
     /// A message indicating that a poll was updated.
+    #[serde(rename = "App\\Events\\PollUpdateEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     PollUpdate(PollUpdateEventData),
     /// A message indicating that a poll was deleted.
+    #[serde(rename = "App\\Events\\PollDeleteEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
     PollDelete(PollDeleteEventData),
     /// A message of unknown type.
     Unknown(String),
@@ -130,25 +149,10 @@ pub enum MessageData {
 /// Data structure containing the content of a message.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatMessage {
-    /// Type of the event send by the server.
-    pub event: String,
-    /// Data of the message.
-    #[serde(deserialize_with = "deserialize_data")]
-    pub data: Option<MessageData>,
+    #[serde(flatten)]
+    pub data: MessageData,
     /// Channel id.
     pub channel: String,
-}
-
-fn deserialize_data<'de, D>(deserializer: D) -> Result<Option<MessageData>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-
-    match serde_json::from_value(value) {
-        Ok(data) => Ok(Some(data)),
-        Err(_) => Ok(None),
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -321,52 +325,11 @@ impl<'de> Deserialize<'de> for ChatMessageSenderBadge {
         }
     }
 }
-
-impl<'de> Deserialize<'de> for MessageData {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let data_str = String::deserialize(deserializer)?;
-        match serde_json::from_str::<ChatMessageEventData>(&data_str) {
-            Ok(chat_message) => return Ok(MessageData::ChatMessage(chat_message)),
-            Err(_) => {}
-        }
-
-        match serde_json::from_str::<DeletedMessageEventData>(&data_str) {
-            Ok(deleted_message) => return Ok(MessageData::DeletedMessage(deleted_message)),
-            Err(_) => {}
-        }
-
-        match serde_json::from_str::<UserBannedEventData>(&data_str) {
-            Ok(user_banned) => return Ok(MessageData::UserBanned(user_banned)),
-            Err(_) => {}
-        }
-
-        match serde_json::from_str::<UserUnbannedEventData>(&data_str) {
-            Ok(user_unbanned) => return Ok(MessageData::UserUnbanned(user_unbanned)),
-            Err(_) => {}
-        }
-
-        match serde_json::from_str::<ChatroomUpdatedEventData>(&data_str) {
-            Ok(chatroom_updated) => return Ok(MessageData::ChatroomUpdated(chatroom_updated)),
-            Err(_) => {}
-        }
-
-        match serde_json::from_str::<ChatroomClearEventData>(&data_str) {
-            Ok(chatroom_clear) => return Ok(MessageData::ChatroomClear(chatroom_clear)),
-            Err(_) => {}
-        }
-
-        match serde_json::from_str::<PollUpdateEventData>(&data_str) {
-            Ok(poll_update) => return Ok(MessageData::PollUpdate(poll_update)),
-            Err(_) => {}
-        }
-        match serde_json::from_str::<PollDeleteEventData>(&data_str) {
-            Ok(poll_delete) => return Ok(MessageData::PollDelete(poll_delete)),
-            Err(_) => {}
-        }
-
-        Ok(MessageData::Unknown(data_str))
-    }
+fn json_string_to_struct<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let s = String::deserialize(deserializer)?;
+    serde_json::from_str(&s).map_err(serde::de::Error::custom)
 }
