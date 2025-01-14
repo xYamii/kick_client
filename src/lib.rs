@@ -1,70 +1,60 @@
+use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use serde::de::{DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use tokio::sync::mpsc;
+use std::fmt;
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{tungstenite, MaybeTlsStream, WebSocketStream};
 
 /// A WebSocket client for connecting to and reading messages from Kick chatroom.
 pub struct KickClient {
+    #[allow(dead_code)]
     /// The WebSocket URL used to connect to the Kick server.
     url: String,
+    #[allow(dead_code)]
+    /// The channel ID for the subscribed chatroom.
+    channel_id: u64,
+    /// The WebSocket read stream for receiving messages.
+    read_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 }
 
 impl KickClient {
-    /// Creates a new instance of `KickClient` with the provided WebSocket URL.
+    /// Creates a new instance of `KickClient` and automatically establishes a WebSocket connection.
     ///
     /// # Arguments
     ///
     /// * `url` - The WebSocket URL to connect to.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let client = KickClient::new("wss://example.com");
-    /// ```
-    pub fn new(url: &str) -> Self {
-        Self {
-            url: url.to_string(),
-        }
-    }
-    /// Connects to the WebSocket and subscribes to a Kick chatroom.
-    ///
-    /// # Arguments
-    ///
-    /// * `chatroom_id` - The ID of the chatroom to subscribe to.
+    /// * `channel_id` - The ID of the chatroom to subscribe to.
     ///
     /// # Returns
     ///
-    /// A `tokio::sync::mpsc::Receiver` that can be used to receive parsed messages.
+    /// A `KickClient` instance ready to receive messages.
     ///
     /// # Errors
     ///
     /// This function will return an error if the WebSocket connection fails.
-    ///
     /// # Examples
     ///
     /// ```
-    /// # tokio_test::block_on(async {
-    /// let client = KickClient::new("wss://example.com");
-    /// let mut messages = client.connect(12345).await.unwrap();
-    /// while let Some(message) = messages.recv().await {
-    ///     println!("Message: {:?}", message.data);
+    /// let mut client = KickClient::new("wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false", 281473).await.unwrap();
+    /// while let Some(message) = client.read_message().await.unwrap() {
+    ///     println!("{:?}", message);
     /// }
-    /// # });
     /// ```
-    pub async fn connect(
-        &self,
-        chatroom_id: u64,
-    ) -> Result<mpsc::Receiver<KickChatMessage>, Box<dyn Error>> {
-        let (ws_stream, _) = connect_async(self.url.clone()).await?;
-        let (mut write, mut read) = ws_stream.split();
+    pub async fn new(url: &str, channel_id: u64) -> Result<Self, Box<dyn Error>> {
+        let request = url.into_client_request()?;
+        let (ws_stream, _) = connect_async(request).await?;
+        let (mut write, read) = ws_stream.split();
 
+        // Create a subscription message
         let subscribe_message = serde_json::json!({
             "event": "pusher:subscribe",
             "data": {
                 "auth": "",
-                "channel": format!("chatrooms.{}.v2", chatroom_id)
+                "channel": format!("chatrooms.{}.v2", channel_id)
             }
         });
 
@@ -72,33 +62,51 @@ impl KickClient {
             .send(Message::Text(subscribe_message.to_string().into()))
             .await?;
 
-        let (tx, rx) = mpsc::channel(100);
+        Ok(Self {
+            url: url.to_string(),
+            channel_id,
+            read_stream: read,
+        })
+    }
 
-        tokio::spawn(async move {
-            while let Some(msg) = read.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        let parsed_message: serde_json::Result<KickChatMessage> =
-                            serde_json::from_str(&text)
-                                .inspect_err(|e| eprintln!("Error parsing message: {}", e));
-                        if let Ok(parsed_message) = parsed_message {
-                            if tx.send(parsed_message).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error receiving message: {}", e);
-                        break;
-                    }
-                    _ => {
-                        eprintln!("Received a non-text message:\n {:?}", msg);
-                    }
+    /// Reads the next message from the WebSocket stream and returns a parsed `KickChatMessage`.
+    ///
+    /// # Returns
+    ///
+    /// A `KickChatMessage` if a valid message is received, or `None` if the stream ends.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the WebSocket stream encounters an error.
+    pub async fn read_message(&mut self) -> Result<Option<KickChatMessage>, KickError> {
+        if let Some(msg) = self.read_stream.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    let parsed_message =
+                        serde_json::from_str(&text).map_err(KickError::MessageParseError)?;
+                    return Ok(Some(parsed_message));
                 }
+                Err(e) => {
+                    return Err(KickError::WebSocketError(e));
+                }
+                _ => {}
+            }
+        }
+        Err(KickError::StreamEnded)
+    }
+
+    /// If the `tokio-handling` feature is enabled, this function spawns a task that handles
+    /// incoming messages and invokes the provided callback for each message.
+    #[cfg(feature = "tokio-handling")]
+    pub fn start_handling<F>(mut self, callback: F)
+    where
+        F: Fn(KickMessage) + Send + Sync + 'static,
+    {
+        tokio::spawn(async move {
+            while let Ok(Some(message)) = self.read_message().await {
+                callback(message);
             }
         });
-
-        Ok(rx)
     }
 }
 
@@ -352,4 +360,36 @@ where
 {
     let s = String::deserialize(deserializer)?;
     serde_json::from_str(&s).map_err(serde::de::Error::custom)
+}
+
+/// Enum representing possible errors in KickClient.
+#[derive(Debug)]
+pub enum KickError {
+    WebSocketError(tungstenite::Error),
+    MessageParseError(serde_json::Error),
+    StreamEnded,
+}
+
+impl fmt::Display for KickError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KickError::WebSocketError(err) => write!(f, "WebSocket error: {}", err),
+            KickError::MessageParseError(err) => write!(f, "Message parse error: {}", err),
+            KickError::StreamEnded => write!(f, "WebSocket stream ended unexpectedly"),
+        }
+    }
+}
+
+impl std::error::Error for KickError {}
+
+impl From<tungstenite::Error> for KickError {
+    fn from(err: tungstenite::Error) -> Self {
+        KickError::WebSocketError(err)
+    }
+}
+
+impl From<serde_json::Error> for KickError {
+    fn from(err: serde_json::Error) -> Self {
+        KickError::MessageParseError(err)
+    }
 }
