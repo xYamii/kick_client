@@ -210,20 +210,20 @@ pub enum ChatMessageSenderBadge {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UserBannedEventData {
-    id: u32,
+    id: String,
     user: User,
     banned_by: User,
-    pernament: bool,
+    permanent: bool,
     duration: Option<u64>,
     expires_at: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UserUnbannedEventData {
-    id: u32,
+    id: String,
     user: User,
     unbanned_by: User,
-    pernament: bool,
+    permanent: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
