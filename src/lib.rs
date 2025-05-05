@@ -183,16 +183,16 @@ pub struct ChatMessageEventData {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatMessageSender {
-    id: u32,
-    username: String,
-    slug: String,
-    identity: ChatMessageSenderIdentity,
+    pub id: u32,
+    pub username: String,
+    pub slug: String,
+    pub identity: ChatMessageSenderIdentity,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatMessageSenderIdentity {
-    color: Option<String>,
-    badges: Vec<ChatMessageSenderBadge>,
+    pub color: Option<String>,
+    pub badges: Vec<ChatMessageSenderBadge>,
 }
 
 #[derive(Serialize, Debug)]
@@ -210,105 +210,105 @@ pub enum ChatMessageSenderBadge {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UserBannedEventData {
-    id: String,
-    user: User,
-    banned_by: User,
-    permanent: bool,
-    duration: Option<u64>,
-    expires_at: Option<String>,
+    pub id: String,
+    pub user: User,
+    pub banned_by: User,
+    pub permanent: bool,
+    pub duration: Option<u64>,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UserUnbannedEventData {
-    id: String,
-    user: User,
-    unbanned_by: User,
-    permanent: bool,
+    pub id: String,
+    pub user: User,
+    pub unbanned_by: User,
+    pub permanent: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct User {
-    id: u32,
-    username: String,
-    slug: String,
+    pub id: u32,
+    pub username: String,
+    pub slug: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatroomUpdatedEventData {
-    id: u32,
-    slow_mode: SlowMode,
-    subscribers_mode: SubscribersMode,
-    followers_mode: FollowersMode,
-    emotes_mode: EmotesMode,
-    advanced_bot_protection: AdvancedBotProtection,
+    pub id: u32,
+    pub slow_mode: SlowMode,
+    pub subscribers_mode: SubscribersMode,
+    pub followers_mode: FollowersMode,
+    pub emotes_mode: EmotesMode,
+    pub advanced_bot_protection: AdvancedBotProtection,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SlowMode {
-    enabled: bool,
-    message_interval: u64,
+    pub enabled: bool,
+    pub message_interval: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubscribersMode {
-    enabled: bool,
+    pub enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FollowersMode {
-    enabled: bool,
-    min_duration: u64,
+    pub enabled: bool,
+    pub min_duration: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EmotesMode {
-    enabled: bool,
+    pub enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AdvancedBotProtection {
-    enabled: bool,
-    remaining_time: u64,
+    pub enabled: bool,
+    pub remaining_time: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChatroomClearEventData {
-    id: String,
+    pub id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeletedMessageEventData {
-    id: String,
-    message: DeletedMessage,
-    ai_moderated: bool,
+    pub id: String,
+    pub message: DeletedMessage,
+    pub ai_moderated: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeletedMessage {
-    id: String,
+    pub id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PollUpdateEventData {
-    poll: Poll,
+    pub poll: Poll,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Poll {
-    title: String,
-    options: Vec<PollOption>,
-    duration: u32,
-    remaining: u32,
-    result_display_duration: u32,
-    has_voted: Option<bool>,
-    voted_option_id: Option<String>,
+    pub title: String,
+    pub options: Vec<PollOption>,
+    pub duration: u32,
+    pub remaining: u32,
+    pub result_display_duration: u32,
+    pub has_voted: Option<bool>,
+    pub voted_option_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PollOption {
-    id: u32,
-    label: String,
-    votes: u32,
+    pub id: u32,
+    pub label: String,
+    pub votes: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -316,8 +316,8 @@ pub struct PollDeleteEventData {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PusherConnectionEstablishedEventData {
-    socket_id: String,
-    activity_timeout: u32,
+    pub socket_id: String,
+    pub activity_timeout: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
