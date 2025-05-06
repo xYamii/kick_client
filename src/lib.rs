@@ -125,7 +125,7 @@ pub enum MessageData {
     #[serde(deserialize_with = "json_string_to_struct")]
     ChatMessage(ChatMessageEventData),
     /// A message indicating that user's message was deleted.
-    #[serde(rename = "App\\Events\\DeletedMessageEvent")]
+    #[serde(rename = "App\\Events\\MessageDeletedEvent")]
     #[serde(deserialize_with = "json_string_to_struct")]
     DeletedMessage(DeletedMessageEventData),
     /// A message indicating that a user was banned from the chatroom.
@@ -283,10 +283,12 @@ pub struct ChatroomClearEventData {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all="snake_case")]
 pub struct DeletedMessageEventData {
     pub id: String,
     pub message: DeletedMessage,
     pub ai_moderated: bool,
+    pub violated_rules: Option<Vec<String>>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
