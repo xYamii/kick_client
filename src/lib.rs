@@ -89,9 +89,15 @@ impl KickClient {
                 Err(e) => {
                     return Err(KickError::WebSocketError(e));
                 }
-                _ => {}
+                _ => {
+                    return Ok(Some(KickChatMessage {
+                        data: MessageData::Unknown(None),
+                        channel: None,
+                    }));
+                }
             }
         }
+        println!("something broke lol");
         Err(KickError::StreamEnded)
     }
 
@@ -159,7 +165,7 @@ pub enum MessageData {
     #[serde(deserialize_with = "json_string_to_struct")]
     PusherPong(PusherPongEventData),
     /// A message of unknown type.
-    Unknown(String),
+    Unknown(Option<String>),
 }
 
 /// Data structure containing the content of a message.
