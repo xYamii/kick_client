@@ -283,11 +283,12 @@ pub struct ChatroomClearEventData {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all="snake_case")]
 pub struct DeletedMessageEventData {
     pub id: String,
     pub message: DeletedMessage,
+    #[serde(rename = "aiModerated")]
     pub ai_moderated: bool,
+    #[serde(rename = "violatedRules")]
     pub violated_rules: Option<Vec<String>>
 }
 
