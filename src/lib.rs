@@ -16,7 +16,7 @@ pub struct KickClient {
     url: String,
     #[allow(dead_code)]
     /// The channel ID for the subscribed chatroom.
-    channel_id: u64,
+    channel_ids: Vec<u64>,
     /// The WebSocket read stream for receiving messages.
     read_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 }
@@ -44,27 +44,29 @@ impl KickClient {
     ///     println!("{:?}", message);
     /// }
     /// ```
-    pub async fn new(url: &str, channel_id: u64) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(url: &str, channel_ids: Vec<u64>) -> Result<Self, Box<dyn Error>> {
         let request = url.into_client_request()?;
         let (ws_stream, _) = connect_async(request).await?;
         let (mut write, read) = ws_stream.split();
 
         // Create a subscription message
-        let subscribe_message = serde_json::json!({
-            "event": "pusher:subscribe",
-            "data": {
-                "auth": "",
-                "channel": format!("chatrooms.{}.v2", channel_id)
-            }
-        });
-
-        write
-            .send(Message::Text(subscribe_message.to_string().into()))
-            .await?;
+        for channel_id in channel_ids.clone() {
+            let subscribe_message = serde_json::json!({
+                "event": "pusher:subscribe",
+                "data": {
+                    "auth": "",
+                    "channel": format!("chatrooms.{}.v2", channel_id)
+                }
+            });
+    
+            write
+                .send(Message::Text(subscribe_message.to_string().into()))
+                .await?;
+        }
 
         Ok(Self {
             url: url.to_string(),
-            channel_id,
+            channel_ids,
             read_stream: read,
         })
     }
@@ -79,27 +81,33 @@ impl KickClient {
     ///
     /// This function will return an error if the WebSocket stream encounters an error.
     pub async fn read_message(&mut self) -> Result<Option<KickChatMessage>, KickError> {
-        if let Some(msg) = self.read_stream.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    let parsed_message =
-                        serde_json::from_str(&text).map_err(KickError::MessageParseError)?;
-                    return Ok(Some(parsed_message));
-                }
-                Err(e) => {
-                    return Err(KickError::WebSocketError(e));
-                }
-                _ => {
-                    return Ok(Some(KickChatMessage {
-                        data: MessageData::Unknown(None),
-                        channel: None,
-                    }));
+    if let Some(msg) = self.read_stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                match serde_json::from_str::<KickChatMessage>(&text) {
+                    Ok(parsed_message) => {
+                        Ok(Some(parsed_message))
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to deserialize message: {}. Error: {}", text, e);
+                        Ok(Some(KickChatMessage {
+                            data: MessageData::Unsupported(Some(text.to_string())),
+                            channel: None,
+                        }))
+                    }
                 }
             }
+            Err(e) => Err(KickError::WebSocketError(e)),
+            _ => Ok(Some(KickChatMessage {
+                data: MessageData::Unknown(None),
+                channel: None,
+            })),
         }
-        println!("something broke lol");
+    } else {
+        println!("WebSocket stream ended");
         Err(KickError::StreamEnded)
     }
+}
 
     /// If the `tokio-handling` feature is enabled, this function spawns a task that handles
     /// incoming messages and invokes the provided callback for each message.
@@ -164,8 +172,22 @@ pub enum MessageData {
     #[serde(rename = "pusher:pong")]
     #[serde(deserialize_with = "json_string_to_struct")]
     PusherPong(PusherPongEventData),
+    /// A messenge indicating that someone purchased subscription in the channel.
+    #[serde(rename = "App\\Events\\SubscriptionEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
+    SubscriptionEvent(SubscriptionEventData),
+    /// A messenge indicating that someone's message was unpinned.
+    #[serde(rename = "App\\Events\\PinnedMessageDeletedEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
+    PinnedMessageDeletedEvent(PinnedMessageDeletedEventData),
+    /// A messenge indicating that someone's message was pinned.
+    #[serde(rename = "App\\Events\\PinnedMessageCreatedEvent")]
+    #[serde(deserialize_with = "json_string_to_struct")]
+    PinnedMessageCreatedEvent(PinnedMessageCreatedEventData),
     /// A message of unknown type.
     Unknown(Option<String>),
+    /// A message of unsupported type yet. Feel free to submit it to me.
+    Unsupported(Option<String>)
 }
 
 /// Data structure containing the content of a message.
@@ -191,7 +213,7 @@ pub struct ChatMessageEventData {
 pub struct ChatMessageSender {
     pub id: u32,
     pub username: String,
-    pub slug: String,
+    pub slug: Option<String>,
     pub identity: ChatMessageSenderIdentity,
 }
 
@@ -333,6 +355,32 @@ pub struct PusherConnectionEstablishedEventData {
 pub struct PusherSubscriptionSucceededEventData {}
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct SubscriptionEventData {
+    pub chatroom_id: u32,
+    pub username: String,
+    pub months: u32
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StreamHostEventData {
+    pub chatroom_id: u32,
+    pub optional_message: Option<String>,
+    pub number_viewers: u32,
+    pub host_username: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PinnedMessageDeletedEventData {}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PinnedMessageCreatedEventData {
+    pub message: ChatMessageEventData,
+    pub duration: String,
+    #[serde(rename = "pinnedBy")]
+    pub pinned_by: ChatMessageSender,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PusherPongEventData {}
 
 impl<'de> Deserialize<'de> for ChatMessageSenderBadge {
@@ -368,8 +416,9 @@ where
     T: DeserializeOwned,
 {
     let s = String::deserialize(deserializer)?;
-    serde_json::from_str(&s).map_err(serde::de::Error::custom)
-}
+    serde_json::from_str(&s).map_err(|e| {
+        serde::de::Error::custom(e)
+    })}
 
 /// Enum representing possible errors in KickClient.
 #[derive(Debug)]
