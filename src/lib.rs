@@ -27,7 +27,7 @@ impl KickClient {
     /// # Arguments
     ///
     /// * `url` - The WebSocket URL to connect to.
-    /// * `channel_id` - The ID of the chatroom to subscribe to.
+    /// * `channel_ids` - The IDs of the chatrooms to subscribe to.
     ///
     /// # Returns
     ///
@@ -39,7 +39,7 @@ impl KickClient {
     /// # Examples
     ///
     /// ```
-    /// let mut client = KickClient::new("wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false", 281473).await.unwrap();
+    /// let mut client = KickClient::new("wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false", [281473]).await.unwrap();
     /// while let Some(message) = client.read_message().await.unwrap() {
     ///     println!("{:?}", message);
     /// }
@@ -89,9 +89,8 @@ impl KickClient {
                         Ok(Some(parsed_message))
                     }
                     Err(e) => {
-                        eprintln!("Failed to deserialize message: {}. Error: {}", text, e);
                         Ok(Some(KickChatMessage {
-                            data: MessageData::Unsupported(Some(text.to_string())),
+                            data: MessageData::Unsupported(Some(text.to_string()), e.to_string()),
                             channel: None,
                         }))
                     }
@@ -187,7 +186,7 @@ pub enum MessageData {
     /// A message of unknown type.
     Unknown(Option<String>),
     /// A message of unsupported type yet. Feel free to submit it to me.
-    Unsupported(Option<String>)
+    Unsupported(Option<String>, String)
 }
 
 /// Data structure containing the content of a message.
